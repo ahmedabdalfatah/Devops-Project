@@ -1,0 +1,59 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = 'my-flask-app'
+        IMAGE_TAG  = "v${BUILD_NUMBER}"
+        CONTAINER  = 'flask-container'
+        PORT       = '5000'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                echo "Checking out branch: ${GIT_BRANCH}"
+                checkout scm
+            }
+        }
+
+        stage('Build') {
+            steps {
+                echo "Building image: ${IMAGE_NAME}:${IMAGE_TAG}"
+                sh 'chmod +x Script/*.sh'
+                sh "Script/build.sh ${IMAGE_TAG}"
+            }
+        }
+
+        stage('Test') {
+            steps {
+                echo 'Running container for testing...'
+                sh "docker run -d --name test-container -p 5001:5000 ${IMAGE_NAME}:${IMAGE_TAG}"
+                sh 'sleep 3'
+                sh 'curl -f http://localhost:5001 || (docker rm -f test-container && exit 1)'
+                sh 'curl -f http://localhost:5001/health || (docker rm -f test-container && exit 1)'
+                sh 'docker rm -f test-container'
+                echo 'All tests passed!'
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo "Deploying ${IMAGE_NAME}:${IMAGE_TAG}..."
+                sh 'Script/stop.sh'
+                sh "Script/run.sh ${CONTAINER} ${PORT} ${IMAGE_TAG}"
+                echo "App running at http://localhost:${PORT}"
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline succeeded! ${IMAGE_NAME}:${IMAGE_TAG} is live."
+        }
+        failure {
+            echo 'Pipeline failed. Check the logs above.'
+            sh 'docker rm -f test-container || true'
+        }
+    }
+}
